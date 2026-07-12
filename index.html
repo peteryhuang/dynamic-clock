@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Dynamic Clock</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #212121;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+    }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+'use strict';
+
+// ── Symbol constants ─────────────────────────────────────────────────────────
+// Format: [hand1Angle, hand2Angle, forceActive]
+// Angles match the SwiftUI version: 0=up (12 o'clock), 90=right, 180=down, 270=left
+const BH = [315, 315, true ];  // active diagonal — used for background fill
+const V  = [  0, 180, true ];  // full vertical        |
+const H  = [ 90, 270, true ];  // full horizontal      —
+const TL = [ 90, 180, true ];  // top-left corner      ⌐   right + down
+const TR = [270, 180, true ];  // top-right corner     ┐   left  + down
+const BL = [ 90,   0, true ];  // bottom-left corner   └   right + up
+const BR = [270,   0, true ];  // bottom-right corner  ┘   left  + up
+const HL = [270, 270, true ];  // half horiz — arm goes LEFT only
+const HR = [ 90,  90, true ];  // half horiz — arm goes RIGHT only
+const VT = [  0,   0, true ];  // half vert  — arm goes UP only
+const VB = [180, 180, true ];  // half vert  — arm goes DOWN only
+
+// ── Digit patterns (3 cols × 5 rows) — exact copy of DigitPatterns.swift ────
+const DIGIT_PATTERNS = {
+  //      col 0   col 1  col 2
+  0: [ [TL, H,  TR],   // row 0 — top bar
+       [V,  VB, V ],   // row 1 — upper sides, center arm points down
+       [V,  V,  V ],   // row 2 — middle (full vertical in center)
+       [V,  VT, V ],   // row 3 — lower sides, center arm points up
+       [BL, H,  BR] ], // row 4 — bottom bar
+
+  1: [ [BH, TL, TR],
+       [BH, V,  V ],
+       [BH, V,  V ],
+       [BH, V,  V ],
+       [BH, BL, BR] ],
+
+  2: [ [TL, H,  TR],
+       [BL, HL, V ],
+       [TL, H,  BR],
+       [V,  HR, TR],
+       [BL, H,  BR] ],
+
+  3: [ [TL, H,  TR],
+       [BL, TR, V ],
+       [HR, BR, V ],
+       [TL, BR, V ],
+       [BL, H,  BR] ],
+
+  4: [ [TL, TR, TR],
+       [V,  V,  V ],
+       [V,  BL, V ],
+       [BL, TR, V ],
+       [BH, BL, BR] ],
+
+  5: [ [TL, H,  TR],
+       [V,  HR, BR],
+       [BL, H,  TR],
+       [TL, HL, V ],
+       [BL, H,  BR] ],
+
+  6: [ [TL, H,  TR],
+       [V,  TL, BR],
+       [V,  BL, TR],
+       [V,  VT, V ],
+       [BL, H,  BR] ],
+
+  7: [ [TL, H,  TR],
+       [BL, TR, V ],
+       [BH, V,  V ],
+       [BH, V,  V ],
+       [BH, BL, BR] ],
+
+  8: [ [TL, H,  TR],
+       [V,  VB, V ],
+       [BL, H,  TR],
+       [V,  VB, V ],
+       [BL, H,  BR] ],
+
+  9: [ [TL, H,  TR],
+       [V,  VB, V ],
+       [BL, TR, V ],
+       [TL, BR, V ],
+       [BL, H,  BR] ],
+};
+
+// ── Grid layout constants (matching ClockGridView.swift) ─────────────────────
+const DIGIT_COLS       = 3;
+const DIGIT_ROWS       = 5;
+const TOTAL_COLS       = 8;
+const SPACING          = 4;   // px gap between clock faces
+const DIGIT_START_COLS = [1, 4]; // hours digit starts at col 1, minutes at col 4
+
+// Background: single arm pointing upper-left (315°) — the BH fill
+const BG_H1 = 315, BG_H2 = 315;
+
+// Returns the 5×3 angle grid for a digit 0–9
+function anglesForDigit(d) {
+  return DIGIT_PATTERNS[d] ?? Array.from({ length: DIGIT_ROWS }, () => [BH, BH, BH]);
+}
+
+// Returns the [h1, h2, forceActive] for one grid cell
+function anglesAt(col, row, digits, hoursStart, minutesStart) {
+  const hoursEnd   = hoursStart   + DIGIT_ROWS - 1;
+  const minutesEnd = minutesStart + DIGIT_ROWS - 1;
+
+  // Top half — hours (digits[0] and digits[1])
+  if (row >= hoursStart && row <= hoursEnd) {
+    const dr = row - hoursStart;
+    for (let i = 0; i < DIGIT_START_COLS.length; i++) {
+      const sc = DIGIT_START_COLS[i];
+      if (col >= sc && col < sc + DIGIT_COLS)
+        return anglesForDigit(digits[i])[dr][col - sc];
+    }
+  }
+
+  // Bottom half — minutes (digits[2] and digits[3])
+  if (row >= minutesStart && row <= minutesEnd) {
+    const dr = row - minutesStart;
+    for (let i = 0; i < DIGIT_START_COLS.length; i++) {
+      const sc = DIGIT_START_COLS[i];
+      if (col >= sc && col < sc + DIGIT_COLS)
+        return anglesForDigit(digits[i + 2])[dr][col - sc];
+    }
+  }
+
+  return BH; // background fill everywhere else
+}
+
+// Returns [H1, H2, M1, M2] in 12-hour format, matching ContentView.swift
+function currentTimeDigits() {
+  const now = new Date();
+  let hour  = now.getHours();   // 0–23
+  const min = now.getMinutes(); // 0–59
+  // 0 → 12, 13-23 → 1-11, 1-12 unchanged
+  hour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+  return [
+    Math.floor(hour / 10), // H1 — tens of hour
+    hour % 10,             // H2 — ones of hour
+    Math.floor(min / 10),  // M1 — tens of minute
+    min % 10,              // M2 — ones of minute
+  ];
+}
+
+// ── Canvas drawing ──────────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+
+// Draws one half-hand capsule from the disc center outward
+function drawHand(cx, cy, angleDeg, length, width, color) {
+  const r = width / 2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angleDeg * Math.PI / 180); // 0° = up, matches SwiftUI rotationEffect
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  // Rounded rect from (−r, −length) to (+r, 0) — bottom sits at disc center
+  ctx.roundRect(-r, -length, width, length, r);
+  ctx.fill();
+  ctx.restore();
+}
+
+// Draws one circular disc with its two hands
+function drawFace(x, y, size, face) {
+  const [h1, h2, forceActive] = face;
+  const cx = x + size / 2;
+  const cy = y + size / 2;
+  const r  = size / 2;
+
+  // A cell is "background" (gray hands) only when forceActive=false AND angles = 315/315.
+  // In the current digit patterns this never occurs, so all hands render near-black.
+  const isBackground = !forceActive && h1 === BG_H1 && h2 === BG_H2;
+  const handColor    = isBackground ? '#857F79' : '#171717'; // gray : near-black
+
+  // Disc + drop-shadow (matching ClockFaceView shadow parameters)
+  ctx.save();
+  ctx.shadowColor   = 'rgba(0,0,0,0.22)';
+  ctx.shadowBlur    = size * 0.08;
+  ctx.shadowOffsetX = size * 0.04;
+  ctx.shadowOffsetY = size * 0.06;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = '#E8E5DF'; // cream
+  ctx.fill();
+  ctx.restore();
+
+  // Clip both hands inside the disc boundary
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.clip();
+
+  const len = size * 0.43; // hand length = 43% of diameter (matches Swift)
+  const w   = size * 0.13; // hand width  = 13% of diameter (matches Swift)
+  drawHand(cx, cy, h1, len, w, handColor);
+  drawHand(cx, cy, h2, len, w, handColor);
+  ctx.restore();
+}
+
+// ── Main render loop ────────────────────────────────────────────────────────
+function render() {
+  const W      = window.innerWidth;
+  const H      = window.innerHeight;
+  const digits = currentTimeDigits();
+
+  // Clear frame
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#212121'; // charcoal background
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Layout: match ClockGridView's sizing math
+  const pad       = 20;
+  const innerW    = W - pad * 2;
+  const innerH    = H - pad * 2;
+
+  // Size clock faces to fill the width...
+  let clockSize = (innerW - SPACING * (TOTAL_COLS - 1)) / TOTAL_COLS;
+  // ...but cap so that at least 16 rows always fit in the height.
+  // (16 rows = enough padding + 5 hours rows + gap + 5 minutes rows + padding,
+  //  with no overlap between the two digit sections.)
+  const MIN_ROWS      = 16;
+  const maxSizeForH   = (innerH - SPACING * (MIN_ROWS - 1)) / MIN_ROWS;
+  if (clockSize > maxSizeForH) clockSize = maxSizeForH;
+
+  const totalRows = Math.max(Math.floor((innerH + SPACING) / (clockSize + SPACING)), MIN_ROWS);
+
+  const halfRows   = Math.floor(totalRows / 2);
+  const hoursStart = Math.floor((halfRows - DIGIT_ROWS) / 2) + 2;      // shifted 2 rows down
+  const minsStart  = halfRows + Math.floor((halfRows - DIGIT_ROWS) / 2) - 1; // shifted 1 row up
+
+  const gridW  = TOTAL_COLS * clockSize + (TOTAL_COLS - 1) * SPACING;
+  const gridH  = totalRows  * clockSize + (totalRows  - 1) * SPACING;
+  const startX = (W - gridW) / 2;
+  const startY = (H - gridH) / 2;
+
+  // Cream card behind the grid (matches the RoundedRectangle in ContentView)
+  const cardPad = 8;
+  ctx.fillStyle = '#E8E5DF';
+  ctx.beginPath();
+  ctx.roundRect(startX - cardPad, startY - cardPad,
+                gridW + cardPad * 2, gridH + cardPad * 2, 14);
+  ctx.fill();
+
+  // Draw every clock face in the grid
+  for (let row = 0; row < totalRows; row++) {
+    for (let col = 0; col < TOTAL_COLS; col++) {
+      const face = anglesAt(col, row, digits, hoursStart, minsStart);
+      const x    = startX + col * (clockSize + SPACING);
+      const y    = startY + row * (clockSize + SPACING);
+      drawFace(x, y, clockSize, face);
+    }
+  }
+}
+
+// Resize canvas to fill the window, accounting for high-DPI screens
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width        = window.innerWidth  * dpr;
+  canvas.height       = window.innerHeight * dpr;
+  canvas.style.width  = window.innerWidth  + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // reset + scale in one step
+  render();
+}
+
+window.addEventListener('resize', resize);
+resize();
+setInterval(render, 1000); // update every second
+</script>
+</body>
+</html>
