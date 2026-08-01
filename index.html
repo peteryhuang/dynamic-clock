@@ -113,7 +113,7 @@ const BG_H1 = 315, BG_H2 = 315;
 
 // Returns the 5×3 angle grid for a digit 0–9
 function anglesForDigit(d) {
-  return DIGIT_PATTERNS[d] ?? Array.from({ length: DIGIT_ROWS }, () => [BH, BH, BH]);
+  return DIGIT_PATTERNS[d] || Array.from({ length: DIGIT_ROWS }, () => [BH, BH, BH]);
 }
 
 // Returns the [h1, h2, forceActive] for one grid cell
