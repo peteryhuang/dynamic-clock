@@ -265,6 +265,10 @@ function render() {
   // Whichever dimension had slack left over (usually width, on an iPad),
   // add extra background clock faces to fill it instead of leaving empty margins.
   TOTAL_COLS = Math.max(MIN_TOTAL_COLS, Math.floor((innerW + SPACING) / (clockSize + SPACING)));
+  // Force an even column count so the left/right filler columns split exactly
+  // in half — an odd count would dump the leftover column on one side only,
+  // throwing the digits off-center.
+  if (TOTAL_COLS % 2 !== 0) TOTAL_COLS -= 1;
   const totalRows = Math.max(MIN_ROWS, Math.floor((innerH + SPACING) / (clockSize + SPACING)));
 
   // Re-center the two digit groups (each DIGIT_COLS wide, back-to-back) within TOTAL_COLS.
