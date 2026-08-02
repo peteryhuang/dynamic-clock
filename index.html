@@ -106,9 +106,10 @@ const DIGIT_PATTERNS = {
 // ── Grid layout constants (matching ClockGridView.swift) ─────────────────────
 const DIGIT_COLS       = 3;
 const DIGIT_ROWS       = 5;
-const TOTAL_COLS       = 8;
 const SPACING          = 4;   // px gap between clock faces
-const DIGIT_START_COLS = [1, 4]; // hours digit starts at col 1, minutes at col 4
+const MIN_TOTAL_COLS   = 8;   // minimum cols needed: 1 pad + 3-col digit + 3-col digit + 1 pad
+let   TOTAL_COLS       = MIN_TOTAL_COLS; // recalculated each render() to fill available width
+let   DIGIT_START_COLS = [1, 4];         // recalculated each render() to stay centered
 
 // Background: single arm pointing upper-left (315°) — the BH fill
 const BG_H1 = 315, BG_H2 = 315;
@@ -250,20 +251,29 @@ function render() {
   const innerW    = W - pad * 2;
   const innerH    = H - pad * 2;
 
-  // Size clock faces to fill the width...
-  let clockSize = (innerW - SPACING * (TOTAL_COLS - 1)) / TOTAL_COLS;
-  // ...but cap so that at least 16 rows always fit in the height.
-  // (16 rows = enough padding + 5 hours rows + gap + 5 minutes rows + padding,
-  //  with no overlap between the two digit sections.)
-  const MIN_ROWS      = 16;
-  const maxSizeForH   = (innerH - SPACING * (MIN_ROWS - 1)) / MIN_ROWS;
-  if (clockSize > maxSizeForH) clockSize = maxSizeForH;
+  // MIN_ROWS = 1 row padding + 5 hours rows + 5 minutes rows + 1 row padding,
+  // with the two digit blocks touching (no gap) — the tightest layout that
+  // still avoids the blocks overlapping.
+  const MIN_ROWS = 12;
 
-  const totalRows = Math.max(Math.floor((innerH + SPACING) / (clockSize + SPACING)), MIN_ROWS);
+  // Pick the face size that lets BOTH the minimum columns and minimum rows
+  // fit on screen — whichever dimension is tighter wins, so nothing overflows.
+  const sizeByWidth  = (innerW - SPACING * (MIN_TOTAL_COLS - 1)) / MIN_TOTAL_COLS;
+  const sizeByHeight = (innerH - SPACING * (MIN_ROWS - 1)) / MIN_ROWS;
+  const clockSize    = Math.min(sizeByWidth, sizeByHeight);
+
+  // Whichever dimension had slack left over (usually width, on an iPad),
+  // add extra background clock faces to fill it instead of leaving empty margins.
+  TOTAL_COLS = Math.max(MIN_TOTAL_COLS, Math.floor((innerW + SPACING) / (clockSize + SPACING)));
+  const totalRows = Math.max(MIN_ROWS, Math.floor((innerH + SPACING) / (clockSize + SPACING)));
+
+  // Re-center the two digit groups (each DIGIT_COLS wide, back-to-back) within TOTAL_COLS.
+  const leftPad = Math.floor((TOTAL_COLS - DIGIT_COLS * 2) / 2);
+  DIGIT_START_COLS = [leftPad, leftPad + DIGIT_COLS];
 
   const halfRows   = Math.floor(totalRows / 2);
-  const hoursStart = Math.floor((halfRows - DIGIT_ROWS) / 2) + 2;      // shifted 2 rows down
-  const minsStart  = halfRows + Math.floor((halfRows - DIGIT_ROWS) / 2) - 1; // shifted 1 row up
+  const hoursStart = Math.floor((halfRows - DIGIT_ROWS) / 2) + 1; // shifted 1 row down
+  const minsStart  = halfRows + Math.floor((halfRows - DIGIT_ROWS) / 2);  // naturally aligned
 
   const gridW  = TOTAL_COLS * clockSize + (TOTAL_COLS - 1) * SPACING;
   const gridH  = totalRows  * clockSize + (totalRows  - 1) * SPACING;
